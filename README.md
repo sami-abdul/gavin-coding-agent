@@ -1,10 +1,10 @@
-# Assistant Coder (Hybrid Approach)
+# Gavin Coding Agent
 
-A Node.js server that generates complete, structured web application projects by combining code generation from OpenAI Assistants with local scaffolding commands, and optionally deploying them to Vercel.
+A Node.js server that generates complete, structured web application projects by combining code generation from OpenAI Assistants with local scaffolding commands, and deploying them to Vercel.
 
 ## Overview
 
-Assistant Coder uses a hybrid approach to create full-featured web applications:
+Gavin uses a hybrid approach to create full-featured web applications:
 
 1. It uses the OpenAI Assistants API to generate all the necessary code files
 2. It runs local scaffolding commands (like `create-vite` or `create-next-app`) to set up a proper project structure
@@ -37,7 +37,6 @@ This approach solves the limitation that OpenAI's Code Interpreter cannot run np
 2. Install dependencies:
 
 ```bash
-cd assistant-coder
 npm install
 ```
 
@@ -45,7 +44,7 @@ npm install
    - Go to [OpenAI Platform](https://platform.openai.com)
    - Navigate to "Assistants" in the left sidebar
    - Click "Create"
-   - Name: "Project Coder Assistant" (or any name you prefer)
+   - Name: "Gaving Coding Agent" (or any name you prefer)
    - Instructions: 
      ```
      You are an expert web developer. Your job is to generate code for complete web applications based on user prompts.
@@ -201,7 +200,7 @@ This will prompt you to enter a project description or use the default.
 
 ## Notes and Limitations
 
-- The Assistant should not try to run npm/npx commands - it should only generate code
+- The Agent should not try to run npm/npx commands - it should only generate code
 - Local scaffolding requires npm and Node.js to be installed on the server
 - Some complex project requirements may need manual adjustments after generation
 - The server does not implement authentication or rate limiting
