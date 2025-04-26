@@ -24,22 +24,22 @@ async function pollJobStatus(jobId) {
   let isComplete = false;
   let attempts = 0;
   let lastStatus = '';
-  
+
   while (!isComplete) {
     // Get job status
     const response = await fetch(`${STATUS_URL}?jobId=${jobId}`);
     const data = await response.json();
-    
+
     if (!data.success) {
       throw new Error(`Status check failed: ${data.error}`);
     }
-    
+
     // Update status display if changed
     if (data.status !== lastStatus) {
       const statusEmoji = getStatusEmoji(data.status);
       console.log(`\n${statusEmoji} Status: ${data.status.toUpperCase()}`);
       lastStatus = data.status;
-      
+
       // Show error if failed
       if (data.status.includes('failed') && data.error) {
         console.log(`\n❌ Error: ${data.error}`);
@@ -48,21 +48,21 @@ async function pollJobStatus(jobId) {
       // Just print a dot to show we're still alive
       process.stdout.write('.');
     }
-    
+
     // Check if the job is complete (success or failure)
-    if (data.status === 'completed' || 
-        data.status === 'failed' ||
-        data.status === 'deployment_failed' || 
-        data.status === 'completed_without_deployment') {
+    if (data.status === 'completed' ||
+      data.status === 'failed' ||
+      data.status === 'deployment_failed' ||
+      data.status === 'completed_without_deployment') {
       return data;
     }
-    
+
     // Prevent infinite loops
     attempts++;
     if (attempts > 60) { // 5 minutes max (60 * 5 seconds)
       throw new Error('Polling timed out after 5 minutes');
     }
-    
+
     // Wait before the next poll
     await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL));
   }
@@ -88,60 +88,61 @@ function getStatusEmoji(status) {
 /**
  * Test function that sends a request to the server and displays the response
  */
-async function testApi(customPrompt) {
+async function testApi(customPrompt, apiProvider) {
   try {
     // Use provided prompt or default to a simple example
     const prompt = customPrompt || 'Create a simple React app with Vite that displays a counter with increment/decrement buttons and save count to local storage';
-    
+
     console.log('\n🚀 Testing the Assistant Coder API...');
     console.log(`\n📝 Sending prompt: "${prompt}"`);
-    
+    console.log(`\n🤖 Using API provider: ${apiProvider}`);
+
     const startTime = Date.now();
-    
+
     // Step 1: Initialize the job
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ prompt, apiProvider })
     });
-    
+
     const initData = await response.json();
-    
+
     if (!initData.success) {
       console.log('\n❌ Error starting job:');
       console.error(initData.error);
       return;
     }
-    
+
     console.log(`\n🆔 Job ID: ${initData.jobId}`);
     console.log('\n⏳ Starting project generation and deployment...');
     console.log('This may take several minutes. Status will update as the process progresses.');
-    
+
     // Step 2: Poll for job completion
     const finalData = await pollJobStatus(initData.jobId);
     const elapsedMinutes = ((Date.now() - startTime) / 60000).toFixed(1);
-    
+
     // Step 3: Display the final result
     if (finalData.status === 'completed') {
       console.log(`\n\n✅ Project generation and deployment completed in ${elapsedMinutes} minutes!`);
-      
+
       // Display deployment URL prominently
       if (finalData.deploymentUrl) {
         console.log('\n🌐 LIVE DEPLOYMENT:');
         console.log(`   ${finalData.deploymentUrl}`);
       }
-      
+
       console.log(`\n📂 Local output directory: ${finalData.outputDir}`);
-      
+
       // Only get file contents if needed for display
       const fileDetailsResponse = await fetch(`${STATUS_URL}?jobId=${initData.jobId}&includeFiles=true`);
       const fileData = await fileDetailsResponse.json();
-      
+
       if (fileData.files && fileData.files.length > 0) {
         console.log(`\n📄 Generated files (${fileData.files.length}):`);
-        
+
         // Group files by directory for better display
         const filesByDirectory = {};
         fileData.files.forEach(file => {
@@ -151,7 +152,7 @@ async function testApi(customPrompt) {
           }
           filesByDirectory[dir].push(file);
         });
-        
+
         // Display files grouped by directory
         Object.keys(filesByDirectory).sort().forEach(dir => {
           if (dir === '') {
@@ -159,11 +160,11 @@ async function testApi(customPrompt) {
           } else {
             console.log(`\n  📁 ${dir}:`);
           }
-          
+
           filesByDirectory[dir].sort().forEach(file => {
             const fileName = file.includes('/') ? file.substring(file.lastIndexOf('/') + 1) : file;
             console.log(`    - ${fileName}`);
-            
+
             // Print preview of text files
             if (fileData.fileContents && fileData.fileContents[file]) {
               const previewContent = fileData.fileContents[file].slice(0, 100).replace(/\n/g, ' ') + '...';
@@ -172,7 +173,7 @@ async function testApi(customPrompt) {
           });
         });
       }
-      
+
       console.log('\n📋 Next Steps:');
       console.log('  1. Visit your live deployment:');
       console.log(`     ${finalData.deploymentUrl || '(Deployment unavailable)'}`);
@@ -183,7 +184,7 @@ async function testApi(customPrompt) {
     } else {
       console.log(`\n\n❌ Project generation ${finalData.status} after ${elapsedMinutes} minutes`);
       console.log(`\n📂 Local output directory: ${finalData.outputDir} (may be incomplete)`);
-      
+
       if (finalData.error) {
         console.log('\n🚨 Error details:');
         console.log(`   ${finalData.error}`);
@@ -198,8 +199,18 @@ async function testApi(customPrompt) {
 // If run directly, prompt for input and run the test
 if (require.main === module) {
   rl.question('\n🤖 Enter your project prompt (or press Enter for default): ', async (answer) => {
-    await testApi(answer.trim());
-    rl.close();
+    const prompt = answer.trim();
+
+    rl.question('\n🤖 Choose API provider (openai/gemini, default: openai): ', async (apiProvider) => {
+      const provider = apiProvider.trim().toLowerCase() || 'openai';
+      if (provider !== 'openai' && provider !== 'gemini') {
+        console.log('\n❌ Invalid API provider. Using default (openai).');
+        await testApi(prompt, 'openai');
+      } else {
+        await testApi(prompt, provider);
+      }
+      rl.close();
+    });
   });
 }
 

@@ -5,7 +5,8 @@
   "main": "assistant-server.js",
   "scripts": {
     "start": "node assistant-server.js",
-    "test": "node test-assistant-api.js"
+    "test": "node test-assistant-api.js",
+    "start-project": "node scripts/start-project.js"
   },
   "keywords": [
     "openai",
@@ -17,6 +18,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.0",
     "adm-zip": "^0.5.10",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -24,4 +26,4 @@
     "openai": "^4.20.1",
     "vercel": "^32.7.2"
   }
-} 
+}
