@@ -1,35 +1,39 @@
 # Gavin Coding Agent
 
-A Node.js server that generates complete, structured web application projects by combining code generation from OpenAI Assistants with local scaffolding commands, and deploying them to Vercel.
+A Node.js server that generates complete, structured web application projects by combining code generation from OpenAI Assistants or Google's Gemini with local scaffolding commands, and deploying them to Vercel.
 
 ## Overview
 
 Gavin uses a hybrid approach to create full-featured web applications:
 
-1. It uses the OpenAI Assistants API to generate all the necessary code files
+1. It uses either OpenAI Assistants API or Google's Gemini API to generate all the necessary code files
 2. It runs local scaffolding commands (like `create-vite` or `create-next-app`) to set up a proper project structure
 3. It combines the generated code with the scaffolded structure to create a complete, ready-to-run project
 4. Optionally, it deploys the generated project to Vercel and provides a public URL
 
-This approach solves the limitation that OpenAI's Code Interpreter cannot run npm/npx commands, while still leveraging the AI's code generation capabilities.
+This approach solves the limitation that AI models cannot run npm/npx commands, while still leveraging their code generation capabilities.
 
 ## Key Features
 
 - Generates entire project directories with proper structure
+- Supports both OpenAI Assistants and Google's Gemini for code generation
 - Runs professional scaffolding tools locally (like Vite, Create React App)
 - Intelligently detects project type (React, Next.js) and language (JS/TS)
 - Creates appropriate configuration files (package.json, vite.config.js, etc.)
 - Implements components, styles, and functionality based on the prompt
 - Returns a complete, ready-to-run project
-- *New:* Automatically deploys projects to Vercel and returns a public URL
+- Automatically deploys projects to Vercel and returns a public URL
+- Easy project startup with a single command
 
 ## Prerequisites
 
 - Node.js (v14 or higher recommended)
 - npm or yarn
-- OpenAI API key with access to the Assistants API and GPT-4 models
-- An Assistant created on the OpenAI platform with appropriate settings
-- *New:* Vercel account and API token (for deployment feature)
+- Either:
+  - OpenAI API key with access to the Assistants API and GPT-4 models
+  - Google API key with access to Gemini
+- An Assistant created on the OpenAI platform (if using OpenAI)
+- Vercel account and API token (for deployment feature)
 
 ## Installation
 
@@ -40,11 +44,11 @@ This approach solves the limitation that OpenAI's Code Interpreter cannot run np
 npm install
 ```
 
-3. Create an Assistant on the OpenAI platform:
+3. If using OpenAI:
    - Go to [OpenAI Platform](https://platform.openai.com)
    - Navigate to "Assistants" in the left sidebar
    - Click "Create"
-   - Name: "Gaving Coding Agent" (or any name you prefer)
+   - Name: "Gavin Coding Agent" (or any name you prefer)
    - Instructions: 
      ```
      You are an expert web developer. Your job is to generate code for complete web applications based on user prompts.
@@ -64,30 +68,43 @@ npm install
      4. Main entry points (index.js, App.js, etc.)
      5. Any utilities, hooks, or helpers
      ```
-   - Model: GPT-4 or GPT-4 Turbo (gpt-4o recommended)
+   - Model: GPT-4 or GPT-4 Turbo (gpt-4 recommended)
    - Temperature: 0.3 (for more focused responses)
    - Enable Code Interpreter (used for code formatting, not scaffolding)
    - Save and copy the Assistant ID (starts with "asst_")
 
-4. *New:* Get a Vercel API token:
+4. If using Gemini:
+   - Go to [Google AI Studio](https://makersuite.google.com/app/apikey)
+   - Create an API key
+   - Copy the API key value
+
+5. Get a Vercel API token:
    - Log in to your [Vercel account](https://vercel.com)
    - Go to Account Settings → Tokens
    - Create a new token with appropriate permissions
    - Copy the token value
 
-5. Create a `.env` file (copy from `env.example`):
+6. Create a `.env` file (copy from `env.example`):
 
 ```bash
 cp env.example .env
 ```
 
-6. Edit the `.env` file with your API keys and IDs:
+7. Edit the `.env` file with your API keys and IDs:
 
 ```
+# OpenAI configuration (required if using OpenAI)
 OPENAI_API_KEY=sk-your-openai-api-key-here
 ASSISTANT_ID=asst_your-assistant-id-here
+
+# Google configuration (required if using Gemini)
+GOOGLE_API_KEY=your-google-api-key-here
+
+# Server configuration
 PORT=3001
-VERCEL_TOKEN=your-vercel-token-here  # Only needed if you want to enable automatic deployment
+
+# Vercel configuration (optional)
+VERCEL_TOKEN=your-vercel-token-here
 ```
 
 ## Usage
@@ -104,12 +121,18 @@ The server will start on port 3001 by default (or the port specified in your `.e
 
 #### Generate and Deploy a Project
 
-Make a POST request to `/generateProject` with a JSON body containing the prompt:
+Make a POST request to `/generateProject` with a JSON body containing the prompt and API provider:
 
 ```bash
+# Using OpenAI
 curl -X POST http://localhost:3001/generateProject \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Create a React app that displays current weather for a given city using OpenWeatherMap API"}'
+  -d '{"prompt": "Create a React app that displays current weather for a given city using OpenWeatherMap API", "apiProvider": "openai"}'
+
+# Using Gemini
+curl -X POST http://localhost:3001/generateProject \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create a React app that displays current weather for a given city using OpenWeatherMap API", "apiProvider": "gemini"}'
 ```
 
 The response will look like:
@@ -159,11 +182,24 @@ The final successful response:
 }
 ```
 
-To include the full file contents (which can be large), add `includeFiles=true` to the query:
+### Starting Generated Projects
+
+To start a generated project locally, use the `start-project` command:
 
 ```bash
-curl "http://localhost:3001/getDeploymentStatus?jobId=a1b2c3d4e5f6g7h8&includeFiles=true"
+npm run start-project <project-id>
 ```
+
+For example:
+```bash
+npm run start-project a1b2c3d4e5f6g7h8
+```
+
+This will:
+1. Navigate to the project directory
+2. Install dependencies if needed
+3. Start the development server
+4. Open the project in your default browser
 
 ### Test Client
 
@@ -173,16 +209,19 @@ For convenience, a test client is included:
 npm test
 ```
 
-This will prompt you to enter a project description or use the default.
+This will prompt you to:
+1. Enter a project description
+2. Choose between OpenAI and Gemini
+3. Show the progress and results
 
 ## How It Works
 
 1. The server receives a prompt for project generation
 2. It creates a background job and returns a job ID immediately
 3. In the background:
-   - It sends the prompt to the OpenAI Assistant to generate code files
-   - The Assistant responds with code for components, styling, configuration, etc.
-   - The server extracts all code blocks from the Assistant's response
+   - It sends the prompt to either OpenAI Assistant or Gemini to generate code files
+   - The AI responds with code for components, styling, configuration, etc.
+   - The server extracts all code blocks from the AI's response
    - It analyzes the code to detect framework type (React/Next.js), language (JS/TS), etc.
    - It runs the appropriate local scaffolding command (create-vite, create-next-app)
    - It integrates the generated code into the scaffolded project structure
@@ -192,15 +231,17 @@ This will prompt you to enter a project description or use the default.
 ## Implementation Details
 
 - Uses local scaffolding tools for reliable project structure creation
+- Supports both OpenAI Assistants and Google's Gemini for code generation
 - Intelligent code parsing extracts both files and project metadata
 - Automatic detection of React vs Next.js, JavaScript vs TypeScript
 - Support for additional features like Tailwind CSS
 - Asynchronous processing with status monitoring API
 - Optional deployment to Vercel with automatic authentication
+- Easy project startup with a single command
 
 ## Notes and Limitations
 
-- The Agent should not try to run npm/npx commands - it should only generate code
+- The AI models should not try to run npm/npx commands - they should only generate code
 - Local scaffolding requires npm and Node.js to be installed on the server
 - Some complex project requirements may need manual adjustments after generation
 - The server does not implement authentication or rate limiting
