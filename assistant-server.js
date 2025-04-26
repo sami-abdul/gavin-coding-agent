@@ -1,8 +1,8 @@
 /**
- * assistant-server.js - API server for project generation using OpenAI Assistants with Code Interpreter
+ * assistant-server.js - API server for project generation using OpenAI Assistants or Google's Gemini with Code Interpreter
  * 
  * This server creates complete, structured web application projects by combining
- * code generation from OpenAI Assistants with local scaffolding commands.
+ * code generation from OpenAI Assistants or Google's Gemini with local scaffolding commands.
  */
 
 // Load environment variables from .env file
