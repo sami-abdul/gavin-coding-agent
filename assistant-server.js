@@ -400,17 +400,28 @@ async function deployToVercel(projectDir, projectName) {
     // Deploy to Vercel with proper flags:
     // --confirm: Non-interactive equivalent of --yes in newer CLI, avoids prompting.
     // --name: Specifies a unique project name, helps Vercel create a new project if needed.
+    // --prod: Ensures we deploy to production and get the production URL
     console.log('Deploying to Vercel...');
-    const deployCommand = `npx vercel deploy --token=${VERCEL_TOKEN} --name=${projectName} --confirm`;
+    const deployCommand = `npx vercel deploy --token=${VERCEL_TOKEN} --name=${projectName} --confirm --prod`;
     console.log(`Executing Vercel command: ${deployCommand}`);
     const deployOutput = await executeCommand(
       deployCommand,
       projectDir
     );
     
-    // Parse deployment URL from output
+    // Parse deployment URL from output and ensure it's the production URL
     const urlMatch = deployOutput.match(/(https:\/\/[^\s]+)/);
-    const deploymentUrl = urlMatch ? urlMatch[0].trim() : null;
+    let deploymentUrl = urlMatch ? urlMatch[0].trim() : null;
+
+    // Clean up the URL to ensure it's the production URL
+    if (deploymentUrl) {
+        // Remove any preview/temporary suffix (anything after '-' before .vercel.app)
+        deploymentUrl = deploymentUrl.replace(/-[a-z0-9]+\.vercel\.app/, '.vercel.app');
+        // Ensure trailing slash for consistency
+        if (!deploymentUrl.endsWith('/')) {
+            deploymentUrl += '/';
+        }
+    }
     
     if (!deploymentUrl) {
       throw new Error('Could not extract deployment URL from Vercel output');
