@@ -355,6 +355,270 @@ async function addGeneratedCodeToProject(projectDir, files) {
 }
 
 /**
+ * Validates and fixes component import paths to ensure proper references
+ * @param {string} projectDir - Path to the project directory
+ */
+async function validateComponentImports(projectDir) {
+  console.log('Validating component imports...');
+  
+  // Process both src/components and src directories
+  const dirsToCheck = [
+    path.join(projectDir, 'src', 'components'),
+    path.join(projectDir, 'src')
+  ];
+  
+  for (const componentsDir of dirsToCheck) {
+    // Check if directory exists
+    if (!fs.existsSync(componentsDir)) {
+      console.log(`Directory ${componentsDir} not found, skipping validation`);
+      continue;
+    }
+    
+    // Get list of all files in the directory
+    const files = fs.readdirSync(componentsDir);
+    
+    // Process all JS/JSX/TS/TSX files
+    const componentFiles = files.filter(file => /\.(js|jsx|ts|tsx)$/.test(file));
+    const styleFiles = files.filter(file => /\.css$/.test(file));
+    
+    // Map of component names to their style files
+    const styleFileMap = {};
+    styleFiles.forEach(styleFile => {
+      const baseName = path.basename(styleFile, path.extname(styleFile));
+      styleFileMap[baseName] = styleFile;
+    });
+    
+    console.log(`Found ${componentFiles.length} component files and ${styleFiles.length} style files in ${componentsDir}`);
+    
+    // Process each component file
+    for (const componentFile of componentFiles) {
+      const componentFilePath = path.join(componentsDir, componentFile);
+      const baseName = path.basename(componentFile, path.extname(componentFile));
+      const content = fs.readFileSync(componentFilePath, 'utf8');
+      
+      // Check if this component has a corresponding style file
+      const correspondingStyleFile = styleFileMap[baseName];
+      
+      // If the component imports a style file that doesn't exist, create an empty one
+      const styleImportRegex = /import\s+['"](\.\/|\.\.\/)*(.+?\.css)['"]/g;
+      let match;
+      let missingImports = [];
+      
+      while ((match = styleImportRegex.exec(content)) !== null) {
+        const importedStyleFile = match[2];
+        // Handle relative import paths correctly
+        let importedStylePath;
+        
+        if (importedStyleFile.includes('/')) {
+          // Handle imports with directories
+          importedStylePath = path.join(projectDir, 'src', importedStyleFile);
+        } else {
+          // Handle imports in the same directory
+          importedStylePath = path.join(componentsDir, importedStyleFile);
+        }
+        
+        if (!fs.existsSync(importedStylePath)) {
+          console.log(`Missing style file detected: ${importedStyleFile} in ${componentFile}`);
+          missingImports.push({
+            importedStyleFile,
+            importedStylePath
+          });
+        }
+      }
+      
+      // Create any missing style files
+      for (const { importedStyleFile, importedStylePath } of missingImports) {
+        console.log(`Creating missing style file: ${importedStylePath}`);
+        
+        // Ensure the directory exists
+        const styleFileDir = path.dirname(importedStylePath);
+        if (!fs.existsSync(styleFileDir)) {
+          fs.mkdirSync(styleFileDir, { recursive: true });
+        }
+        
+        // Create a basic CSS file with some appropriate styles based on the component name
+        const componentName = baseName.replace(/\.(js|jsx|ts|tsx)$/, '');
+        const cssContent = `/* Auto-generated style file for ${componentName} */
+
+.${componentName.toLowerCase()} {
+  margin: 1rem 0;
+  padding: 1rem;
+}
+
+/* Add more styles as needed */
+`;
+        fs.writeFileSync(importedStylePath, cssContent);
+        console.log(`Created style file: ${importedStylePath}`);
+      }
+    }
+  }
+  
+  console.log('Component import validation complete');
+}
+
+/**
+ * Ensures Vite configuration is properly set up for the project
+ * @param {string} projectDir - Path to the project directory
+ */
+async function ensureViteConfig(projectDir) {
+  console.log('Checking Vite configuration...');
+  
+  // Look for vite.config.js or vite.config.ts
+  const configFiles = ['vite.config.js', 'vite.config.ts'].filter(file => 
+    fs.existsSync(path.join(projectDir, file))
+  );
+  
+  if (configFiles.length === 0) {
+    console.log('No Vite config found, creating one...');
+    const viteConfig = `
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  css: {
+    modules: false,
+  },
+});
+`;
+    fs.writeFileSync(path.join(projectDir, 'vite.config.js'), viteConfig);
+    console.log('Created vite.config.js');
+  } else {
+    // Update existing config
+    const configFile = configFiles[0];
+    console.log(`Found ${configFile}, ensuring it has proper configuration...`);
+    
+    const configPath = path.join(projectDir, configFile);
+    let configContent = fs.readFileSync(configPath, 'utf8');
+    
+    // Check if react plugin is included
+    if (!configContent.includes('@vitejs/plugin-react')) {
+      // Add react plugin if missing
+      if (configContent.includes('defineConfig({')) {
+        configContent = configContent.replace(
+          'defineConfig({', 
+          `defineConfig({
+  plugins: [react()],`
+        );
+      }
+      
+      // Add import statement if missing
+      if (!configContent.includes('import react from')) {
+        // Find the last import statement
+        const lastImportIndex = configContent.lastIndexOf('import');
+        if (lastImportIndex !== -1) {
+          const endOfImport = configContent.indexOf('\n', lastImportIndex);
+          if (endOfImport !== -1) {
+            configContent = 
+              configContent.substring(0, endOfImport + 1) + 
+              "import react from '@vitejs/plugin-react';\n" + 
+              configContent.substring(endOfImport + 1);
+          }
+        } else {
+          // No imports found, add at the beginning
+          configContent = "import react from '@vitejs/plugin-react';\n" + configContent;
+        }
+      }
+    }
+    
+    // Check if css configuration is included
+    if (!configContent.includes('css:')) {
+      // Add CSS configuration
+      if (configContent.includes('plugins: [react()]')) {
+        configContent = configContent.replace(
+          'plugins: [react()]', 
+          `plugins: [react()],
+  css: {
+    modules: false,
+  }`
+        );
+      }
+    }
+    
+    // Write updated config
+    fs.writeFileSync(configPath, configContent);
+    console.log(`Updated ${configFile}`);
+  }
+  
+  console.log('Vite configuration check complete');
+}
+
+/**
+ * Test builds the project locally to catch and fix any build errors
+ * @param {string} projectDir - Path to the project directory
+ * @returns {Promise<boolean>} - Whether the build succeeded
+ */
+async function testBuildProject(projectDir) {
+  console.log('Attempting test build to verify project...');
+  
+  try {
+    // Try to build the project
+    await executeCommand('npm run build', projectDir);
+    console.log('Test build successful');
+    return true;
+  } catch (error) {
+    console.error('Test build failed:', error.message);
+    
+    // Check if error is related to missing CSS files
+    if (error.message.includes('Could not resolve') && error.message.includes('.css')) {
+      console.log('Build error appears to be related to CSS imports, attempting to fix...');
+      
+      // Extract the missing file from the error message
+      const missingFileMatch = error.message.match(/Could not resolve ["'](.+?.css)["']/);
+      if (missingFileMatch && missingFileMatch[1]) {
+        const missingFile = missingFileMatch[1];
+        console.log(`Identified missing CSS file: ${missingFile}`);
+        
+        // Try to extract the component name from the error
+        const componentMatch = error.message.match(/from ["'](.+?)["']/);
+        if (componentMatch && componentMatch[1]) {
+          const componentPath = componentMatch[1];
+          console.log(`Component with missing import: ${componentPath}`);
+          
+          // Determine the full path to the component file
+          let componentFullPath = path.join(projectDir, 'src', componentPath);
+          if (!componentFullPath.endsWith('.js') && !componentFullPath.endsWith('.jsx') && 
+              !componentFullPath.endsWith('.ts') && !componentFullPath.endsWith('.tsx')) {
+            // Try common extensions
+            for (const ext of ['.jsx', '.js', '.tsx', '.ts']) {
+              if (fs.existsSync(`${componentFullPath}${ext}`)) {
+                componentFullPath = `${componentFullPath}${ext}`;
+                break;
+              }
+            }
+          }
+          
+          // If we found the component file, add the missing CSS file
+          if (fs.existsSync(componentFullPath)) {
+            console.log(`Found component file: ${componentFullPath}`);
+            
+            // Determine where the CSS file should be
+            const cssFileName = path.basename(missingFile);
+            const cssFilePath = path.join(path.dirname(componentFullPath), cssFileName);
+            
+            // Create the CSS file
+            console.log(`Creating missing CSS file: ${cssFilePath}`);
+            fs.writeFileSync(cssFilePath, `/* Auto-generated CSS file for ${path.basename(componentFullPath)} */\n`);
+            
+            // Try to build again
+            try {
+              await executeCommand('npm run build', projectDir);
+              console.log('Second build attempt successful after fixing CSS');
+              return true;
+            } catch (secondError) {
+              console.error('Second build attempt still failed:', secondError.message);
+              return false;
+            }
+          }
+        }
+      }
+    }
+    
+    return false;
+  }
+}
+
+/**
  * Deploy a generated project to Vercel
  * @param {string} projectDir - Path to the project directory
  * @param {string} projectName - Name to use for the deployment
@@ -376,6 +640,15 @@ async function deployToVercel(projectDir, projectName) {
     // This addresses cases where the AI-generated package.json might be incomplete
     console.log('Ensuring Vite React plugin is installed...');
     await executeCommand('npm install @vitejs/plugin-react --save-dev', projectDir);
+    
+    // Check and update Vite configuration
+    await ensureViteConfig(projectDir);
+    
+    // Validate and fix component imports
+    await validateComponentImports(projectDir);
+    
+    // Test build the project locally to catch any issues
+    await testBuildProject(projectDir);
     
     // Remove any existing .vercel directory if it exists
     // This is crucial for resolving the "Project Settings are invalid" error
