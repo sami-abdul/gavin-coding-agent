@@ -1,8 +1,8 @@
 /**
- * assistant-server.js - API server for project generation using OpenAI Assistants with Code Interpreter
+ * assistant-server.js - API server for project generation using OpenAI Assistants or Google's Gemini with Code Interpreter
  * 
  * This server creates complete, structured web application projects by combining
- * code generation from OpenAI Assistants with local scaffolding commands.
+ * code generation from OpenAI Assistants or Google's Gemini with local scaffolding commands.
  */
 
 // Load environment variables from .env file
@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { OpenAI } = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AdmZip = require('adm-zip');
 const { promisify } = require('util');
 const { spawn, exec } = require('child_process');
@@ -37,14 +38,21 @@ const VERCEL_TOKEN = process.env.VERCEL_TOKEN;
 // Store ongoing deployments for status checking
 const deploymentJobs = new Map();
 
+// Initialize API clients
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
 // Verify necessary environment variables
-if (!process.env.OPENAI_API_KEY) {
-  console.error('Error: OPENAI_API_KEY environment variable is required');
+if (!process.env.OPENAI_API_KEY && !process.env.GOOGLE_API_KEY) {
+  console.error('Error: Either OPENAI_API_KEY or GOOGLE_API_KEY environment variable is required');
   process.exit(1);
 }
 
-if (!ASSISTANT_ID) {
-  console.error('Error: ASSISTANT_ID environment variable is required');
+if (!ASSISTANT_ID && !process.env.GOOGLE_API_KEY) {
+  console.error('Error: Either ASSISTANT_ID or GOOGLE_API_KEY environment variable is required');
   process.exit(1);
 }
 
@@ -52,11 +60,6 @@ if (!ASSISTANT_ID) {
 if (!VERCEL_TOKEN) {
   console.warn('Warning: VERCEL_TOKEN environment variable is not set. Deployment functionality will be disabled.');
 }
-
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 // Ensure the output directory exists
 if (!fs.existsSync(OUTPUT_DIR_BASE)) {
@@ -72,11 +75,11 @@ if (!fs.existsSync(OUTPUT_DIR_BASE)) {
 function listFilesRecursively(dir, baseDir) {
   let results = [];
   const list = fs.readdirSync(dir);
-  
+
   list.forEach(file => {
     const fullPath = path.join(dir, file);
     const stat = fs.statSync(fullPath);
-    
+
     if (stat && stat.isDirectory()) {
       // Recurse into subdirectory
       results = results.concat(listFilesRecursively(fullPath, baseDir));
@@ -85,7 +88,7 @@ function listFilesRecursively(dir, baseDir) {
       results.push(path.relative(baseDir, fullPath));
     }
   });
-  
+
   return results;
 }
 
@@ -94,12 +97,12 @@ function listFilesRecursively(dir, baseDir) {
  */
 function isTextFile(filename) {
   const textExtensions = [
-    '.txt', '.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.scss', 
+    '.txt', '.js', '.jsx', '.ts', '.tsx', '.py', '.html', '.css', '.scss',
     '.json', '.md', '.yaml', '.yml', '.xml', '.csv', '.sh', '.bat', '.ps1',
     '.gitignore', '.env', '.c', '.cpp', '.h', '.hpp', '.java', '.rb', '.php',
     '.go', '.rs', '.swift', '.kt', '.kts', '.sql', '.prisma', '.graphql'
   ];
-  
+
   const ext = path.extname(filename).toLowerCase();
   return textExtensions.includes(ext);
 }
@@ -112,17 +115,17 @@ function isTextFile(filename) {
  */
 async function pollForRunCompletion(threadId, runId) {
   let attempts = 0;
-  
+
   while (attempts < MAX_POLLING_ATTEMPTS) {
     attempts++;
-    
+
     const run = await openai.beta.threads.runs.retrieve(threadId, runId);
-    
+
     // Check if the Run reached a terminal state
     if (['completed', 'failed', 'cancelled', 'expired'].includes(run.status)) {
       return run;
     }
-    
+
     // If the Run needs action, the Assistants API would normally expect us to handle that.
     // For simplicity in this implementation, we'll fail if this happens.
     if (run.status === 'requires_action') {
@@ -130,11 +133,11 @@ async function pollForRunCompletion(threadId, runId) {
       run.status = 'failed'; // Treat as failure for simplicity
       return run;
     }
-    
+
     // Wait before checking again
     await sleep(POLLING_INTERVAL_MS);
   }
-  
+
   // If we reach here, the Run timed out
   throw new Error('Run polling timed out after maximum attempts');
 }
@@ -146,10 +149,10 @@ async function pollForRunCompletion(threadId, runId) {
  */
 async function extractCodeFromAssistantResponse(threadId) {
   const extractedFiles = {};
-  
+
   // List messages in the thread
   const messagesList = await openai.beta.threads.messages.list(threadId);
-  
+
   // Find the most recent assistant message
   let assistantMessage = null;
   for (const message of messagesList.data) {
@@ -158,11 +161,11 @@ async function extractCodeFromAssistantResponse(threadId) {
       break;
     }
   }
-  
+
   if (!assistantMessage) {
     throw new Error('No assistant message found in thread');
   }
-  
+
   // Extract text content from the message
   let textContent = '';
   for (const contentPart of assistantMessage.content) {
@@ -170,18 +173,18 @@ async function extractCodeFromAssistantResponse(threadId) {
       textContent += contentPart.text.value;
     }
   }
-  
+
   // Extract code blocks from the message
   // Look for markdown-style code blocks with language annotations
   const codeBlockRegex = /```([a-zA-Z0-9_+\.]+)?\s*(?:(?:\/\/|#)\s*filename:\s*([a-zA-Z0-9_\-\.\/]+))?\s*([^`]+)```/g;
   let match;
-  
+
   while ((match = codeBlockRegex.exec(textContent)) !== null) {
     // Extract language, optional filename, and code content
     const lang = match[1] || 'txt';
     const explicitFilename = match[2]; // May be undefined
     const code = match[3].trim();
-    
+
     // Determine filename
     let filename;
     if (explicitFilename) {
@@ -198,11 +201,11 @@ async function extractCodeFromAssistantResponse(threadId) {
         filename = `file${Object.keys(extractedFiles).length + 1}${extension}`;
       }
     }
-    
+
     // Store the extracted code
     extractedFiles[filename] = code;
   }
-  
+
   // Extract project information
   const projectInfo = {
     framework: 'react', // Default
@@ -210,23 +213,23 @@ async function extractCodeFromAssistantResponse(threadId) {
     cssFramework: null,
     features: []
   };
-  
+
   // Try to detect framework and features from the code and message
-  if (textContent.toLowerCase().includes('typescript') || 
-      Object.keys(extractedFiles).some(file => file.endsWith('.ts') || file.endsWith('.tsx'))) {
+  if (textContent.toLowerCase().includes('typescript') ||
+    Object.keys(extractedFiles).some(file => file.endsWith('.ts') || file.endsWith('.tsx'))) {
     projectInfo.language = 'typescript';
   }
-  
-  if (textContent.toLowerCase().includes('tailwind') || 
-      (extractedFiles['package.json'] && extractedFiles['package.json'].includes('tailwindcss'))) {
+
+  if (textContent.toLowerCase().includes('tailwind') ||
+    (extractedFiles['package.json'] && extractedFiles['package.json'].includes('tailwindcss'))) {
     projectInfo.cssFramework = 'tailwind';
   }
-  
-  if (textContent.toLowerCase().includes('next.js') || 
-      (extractedFiles['package.json'] && extractedFiles['package.json'].includes('next'))) {
+
+  if (textContent.toLowerCase().includes('next.js') ||
+    (extractedFiles['package.json'] && extractedFiles['package.json'].includes('next'))) {
     projectInfo.framework = 'next';
   }
-  
+
   return { files: extractedFiles, projectInfo };
 }
 
@@ -264,7 +267,7 @@ function getExtensionFromLanguage(language) {
     'kotlin': '.kt',
     'sql': '.sql'
   };
-  
+
   return langMap[language.toLowerCase()] || '.txt';
 }
 
@@ -283,11 +286,11 @@ function executeCommand(command, cwd) {
         reject(error);
         return;
       }
-      
+
       if (stderr) {
         console.warn(`Command stderr: ${stderr}`);
       }
-      
+
       resolve(stdout);
     });
   });
@@ -302,7 +305,7 @@ function executeCommand(command, cwd) {
 async function createScaffoldedProject(outputDir, projectInfo) {
   // Determine scaffolding command based on project info
   let scaffoldCmd;
-  
+
   if (projectInfo.framework === 'next') {
     // Next.js project
     const template = projectInfo.language === 'typescript' ? '--typescript' : '';
@@ -312,20 +315,20 @@ async function createScaffoldedProject(outputDir, projectInfo) {
     const template = projectInfo.language === 'typescript' ? 'react-ts' : 'react';
     scaffoldCmd = `npx create-vite@latest . --template ${template}`;
   }
-  
+
   console.log(`Scaffolding new project with: ${scaffoldCmd}`);
-  
+
   try {
     // Execute the scaffolding command
     await executeCommand(scaffoldCmd, outputDir);
-    
+
     // Install additional dependencies if needed
     if (projectInfo.cssFramework === 'tailwind' && projectInfo.framework !== 'next') {
       console.log('Installing Tailwind CSS...');
       await executeCommand('npm install -D tailwindcss postcss autoprefixer', outputDir);
       await executeCommand('npx tailwindcss init -p', outputDir);
     }
-    
+
     return outputDir;
   } catch (error) {
     console.error('Error during project scaffolding:', error);
@@ -343,11 +346,11 @@ async function addGeneratedCodeToProject(projectDir, files) {
     // Create directory for the file if it doesn't exist
     const filePath = path.join(projectDir, filename);
     const directory = path.dirname(filePath);
-    
+
     if (!fs.existsSync(directory)) {
       fs.mkdirSync(directory, { recursive: true });
     }
-    
+
     // Write file content
     fs.writeFileSync(filePath, content);
     console.log(`Added file: ${filename}`);
@@ -631,7 +634,7 @@ async function deployToVercel(projectDir, projectName) {
 
   try {
     console.log(`Building project in ${projectDir}...`);
-    
+
     // Install dependencies if needed
     console.log('Installing dependencies...');
     await executeCommand('npm install', projectDir);
@@ -640,15 +643,6 @@ async function deployToVercel(projectDir, projectName) {
     // This addresses cases where the AI-generated package.json might be incomplete
     console.log('Ensuring Vite React plugin is installed...');
     await executeCommand('npm install @vitejs/plugin-react --save-dev', projectDir);
-    
-    // Check and update Vite configuration
-    await ensureViteConfig(projectDir);
-    
-    // Validate and fix component imports
-    await validateComponentImports(projectDir);
-    
-    // Test build the project locally to catch any issues
-    await testBuildProject(projectDir);
     
     // Remove any existing .vercel directory if it exists
     // This is crucial for resolving the "Project Settings are invalid" error
@@ -663,13 +657,13 @@ async function deployToVercel(projectDir, projectName) {
         // Decide if we should proceed or throw? For now, log and continue.
       }
     }
-    
+
     // Create a .vercelignore file
     fs.writeFileSync(
       path.join(projectDir, '.vercelignore'),
       'README.md\nnode_modules\n.git'
     );
-    
+
     // Deploy to Vercel with proper flags:
     // --confirm: Non-interactive equivalent of --yes in newer CLI, avoids prompting.
     // --name: Specifies a unique project name, helps Vercel create a new project if needed.
@@ -681,27 +675,27 @@ async function deployToVercel(projectDir, projectName) {
       deployCommand,
       projectDir
     );
-    
+
     // Parse deployment URL from output and ensure it's the production URL
     const urlMatch = deployOutput.match(/(https:\/\/[^\s]+)/);
     let deploymentUrl = urlMatch ? urlMatch[0].trim() : null;
 
     // Clean up the URL to ensure it's the production URL
     if (deploymentUrl) {
-        // Remove any preview/temporary suffix (anything after '-' before .vercel.app)
-        deploymentUrl = deploymentUrl.replace(/-[a-z0-9]+\.vercel\.app/, '.vercel.app');
-        // Ensure trailing slash for consistency
-        if (!deploymentUrl.endsWith('/')) {
-            deploymentUrl += '/';
-        }
+      // Remove any preview/temporary suffix (anything after '-' before .vercel.app)
+      deploymentUrl = deploymentUrl.replace(/-[a-z0-9]+\.vercel\.app/, '.vercel.app');
+      // Ensure trailing slash for consistency
+      if (!deploymentUrl.endsWith('/')) {
+        deploymentUrl += '/';
+      }
     }
-    
+
     if (!deploymentUrl) {
       throw new Error('Could not extract deployment URL from Vercel output');
     }
-    
+
     console.log(`Deployment successful: ${deploymentUrl}`);
-    
+
     return {
       success: true,
       url: deploymentUrl,
@@ -717,26 +711,14 @@ async function deployToVercel(projectDir, projectName) {
 }
 
 /**
- * Handle the full process of generating and deploying a project
- * @param {string} prompt - User's project description prompt
- * @param {string} uniqueId - Unique ID for this job
- * @returns {Promise<void>}
+ * Generate code using Gemini API
+ * @param {string} prompt - User's project description
+ * @returns {Promise<Object>} - Generated code files and project info
  */
-async function processGenerateAndDeploy(prompt, uniqueId) {
-  const outputDir = path.join(OUTPUT_DIR_BASE, uniqueId);
-  const job = deploymentJobs.get(uniqueId);
-  
+async function generateCodeWithGemini(prompt) {
   try {
-    // Update job status
-    job.status = 'generating';
-    job.lastUpdated = Date.now();
-    
-    // Step 1: Create a new Thread
-    console.log('Creating Thread...');
-    const thread = await openai.beta.threads.create();
-    
-    // Step 2: Add a Message to the Thread with enhanced instructions
-    console.log('Adding Message to Thread...');
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
     const enhancedPrompt = `
 I need you to generate code for a web application based on the following requirements:
 
@@ -758,65 +740,173 @@ For each code file, please use the format:
 DO NOT try to execute npm or npx commands - just provide the code files.
 I will handle the setup and installation myself.
 `;
-    
-    await openai.beta.threads.messages.create(thread.id, {
-      role: 'user',
-      content: enhancedPrompt
-    });
-    
-    // Step 3: Run the Assistant on the Thread
-    console.log('Running Assistant...');
-    const run = await openai.beta.threads.runs.create(thread.id, {
-      assistant_id: ASSISTANT_ID
-    });
-    
-    // Step 4: Poll for Run completion
-    console.log('Polling for Run completion...');
-    const completedRun = await pollForRunCompletion(thread.id, run.id);
-    
-    // Check if the Run completed successfully
-    if (completedRun.status !== 'completed') {
-      job.status = 'failed';
-      job.error = `Assistant Run failed: ${completedRun.status}`;
-      job.lastUpdated = Date.now();
-      return;
+
+    const result = await model.generateContent(enhancedPrompt);
+    const response = await result.response;
+    const text = response.text();
+
+    // Extract code blocks and project info
+    const { files, projectInfo } = extractCodeFromResponse(text);
+    return { files, projectInfo };
+  } catch (error) {
+    console.error('Error generating code with Gemini:', error);
+    throw error;
+  }
+}
+
+/**
+ * Extract code blocks from API response
+ * @param {string} response - API response text
+ * @returns {Object} - Extracted code files and project info
+ */
+function extractCodeFromResponse(response) {
+  const extractedFiles = {};
+  const projectInfo = {
+    framework: 'react',
+    language: 'javascript',
+    cssFramework: null,
+    features: []
+  };
+
+  // Look for markdown-style code blocks with language annotations
+  const codeBlockRegex = /```([a-zA-Z0-9_+\.]+)?\s*(?:(?:\/\/|#)\s*filename:\s*([a-zA-Z0-9_\-\.\/]+))?\s*([^`]+)```/g;
+  let match;
+
+  while ((match = codeBlockRegex.exec(response)) !== null) {
+    const lang = match[1] || 'txt';
+    const explicitFilename = match[2];
+    const code = match[3].trim();
+
+    let filename;
+    if (explicitFilename) {
+      filename = explicitFilename;
+    } else {
+      const firstLineMatch = code.match(/^(?:\/\/|#|\/\*)\s*filename:\s*([a-zA-Z0-9_\-\.\/]+)/);
+      if (firstLineMatch) {
+        filename = firstLineMatch[1];
+      } else {
+        const extension = getExtensionFromLanguage(lang);
+        filename = `file${Object.keys(extractedFiles).length + 1}${extension}`;
+      }
     }
-    
-    // Step 5: Extract code files from the Assistant's response
-    console.log('Extracting code from Assistant response...');
-    const { files, projectInfo } = await extractCodeFromAssistantResponse(thread.id);
-    
+
+    extractedFiles[filename] = code;
+  }
+
+  // Detect project type and features
+  if (response.toLowerCase().includes('typescript') ||
+    Object.keys(extractedFiles).some(file => file.endsWith('.ts') || file.endsWith('.tsx'))) {
+    projectInfo.language = 'typescript';
+  }
+
+  if (response.toLowerCase().includes('tailwind') ||
+    (extractedFiles['package.json'] && extractedFiles['package.json'].includes('tailwindcss'))) {
+    projectInfo.cssFramework = 'tailwind';
+  }
+
+  if (response.toLowerCase().includes('next.js') ||
+    (extractedFiles['package.json'] && extractedFiles['package.json'].includes('next'))) {
+    projectInfo.framework = 'next';
+  }
+
+  return { files: extractedFiles, projectInfo };
+}
+
+/**
+ * Handle the full process of generating and deploying a project
+ * @param {string} prompt - User's project description prompt
+ * @param {string} uniqueId - Unique ID for this job
+ * @param {string} apiProvider - API provider to use ('openai' or 'gemini')
+ * @returns {Promise<void>}
+ */
+async function processGenerateAndDeploy(prompt, uniqueId, apiProvider) {
+  const outputDir = path.join(OUTPUT_DIR_BASE, uniqueId);
+  const job = deploymentJobs.get(uniqueId);
+
+  try {
+    // Update job status
+    job.status = 'generating';
+    job.lastUpdated = Date.now();
+
+    let files, projectInfo;
+
+    if (apiProvider === 'openai') {
+      // Use OpenAI Assistant
+      const thread = await openai.beta.threads.create();
+
+      const enhancedPrompt = `
+I need you to generate code for a web application based on the following requirements:
+
+${prompt}
+
+Please provide ALL the code files needed for this project including:
+1. React components (.jsx/.tsx files)
+2. CSS/Styling files
+3. Configuration files (like package.json, vite.config.js, etc.)
+4. Any utility functions or hooks
+5. Main entry points (index.js, App.js, etc.)
+
+For each code file, please use the format:
+\`\`\`language
+// filename: path/to/filename.ext
+// Code content here
+\`\`\`
+
+DO NOT try to execute npm or npx commands - just provide the code files.
+I will handle the setup and installation myself.
+`;
+
+      await openai.beta.threads.messages.create(thread.id, {
+        role: 'user',
+        content: enhancedPrompt
+      });
+
+      const run = await openai.beta.threads.runs.create(thread.id, {
+        assistant_id: ASSISTANT_ID
+      });
+
+      const completedRun = await pollForRunCompletion(thread.id, run.id);
+
+      if (completedRun.status !== 'completed') {
+        throw new Error(`Assistant Run failed: ${completedRun.status}`);
+      }
+
+      const result = await extractCodeFromAssistantResponse(thread.id);
+      files = result.files;
+      projectInfo = result.projectInfo;
+    } else {
+      // Use Gemini
+      const result = await generateCodeWithGemini(prompt);
+      files = result.files;
+      projectInfo = result.projectInfo;
+    }
+
     if (Object.keys(files).length === 0) {
-      job.status = 'failed';
-      job.error = 'No code files found in Assistant response';
-      job.lastUpdated = Date.now();
-      return;
+      throw new Error('No code files found in API response');
     }
-    
-    console.log(`Extracted ${Object.keys(files).length} code files from response`);
-    
+
     // Update job status
     job.status = 'scaffolding';
     job.lastUpdated = Date.now();
-    
+
     // Step 6: Create scaffolded project
     console.log('Creating scaffolded project...');
     await createScaffoldedProject(outputDir, projectInfo);
-    
+
     // Step 7: Add generated code to the project
     console.log('Adding generated code to project...');
     await addGeneratedCodeToProject(outputDir, files);
-    
+
     // Step 8: List the project files
     const projectFiles = listFilesRecursively(outputDir, outputDir);
-    
+
     // Step 9: Read content of small text files
     const fileContents = {};
     projectFiles.forEach(file => {
       try {
         const filePath = path.join(outputDir, file);
         const stats = fs.statSync(filePath);
-        
+
         // Only include small text files (< 1MB)
         if (stats.size < 1024 * 1024 && isTextFile(file)) {
           fileContents[file] = fs.readFileSync(filePath, 'utf8');
@@ -825,21 +915,21 @@ I will handle the setup and installation myself.
         console.error(`Error reading file ${file}: ${err.message}`);
       }
     });
-    
+
     // Store files and contents in job
     job.files = projectFiles;
     job.fileContents = fileContents;
-    
+
     // Update job status
     job.status = 'deploying';
     job.lastUpdated = Date.now();
-    
+
     // Step 10: Deploy to Vercel
     if (VERCEL_TOKEN) {
       console.log('Deploying project to Vercel...');
       const projectName = `ai-project-${uniqueId}`;
       const deployResult = await deployToVercel(outputDir, projectName);
-      
+
       if (deployResult.success) {
         job.status = 'completed';
         job.deploymentUrl = deployResult.url;
@@ -852,11 +942,11 @@ I will handle the setup and installation myself.
       job.status = 'completed_without_deployment';
       job.error = 'Vercel token not configured. Project generated but not deployed.';
     }
-    
+
     // Final job update
     job.lastUpdated = Date.now();
     job.completed = true;
-    
+
   } catch (error) {
     console.error(`Job processing failed: ${error.message}`);
     job.status = 'failed';
@@ -876,8 +966,8 @@ I will handle the setup and installation myself.
  * 4. Deploying the project to Vercel
  */
 app.post('/generateProject', async (req, res) => {
-  const { prompt } = req.body;
-  
+  const { prompt, apiProvider = 'openai' } = req.body;
+
   // Validate request
   if (!prompt) {
     return res.status(400).json({
@@ -885,17 +975,32 @@ app.post('/generateProject', async (req, res) => {
       error: 'Missing required field: prompt'
     });
   }
-  
+
+  if (apiProvider === 'openai' && (!process.env.OPENAI_API_KEY || !ASSISTANT_ID)) {
+    return res.status(400).json({
+      success: false,
+      error: 'OpenAI configuration is missing'
+    });
+  }
+
+  if (apiProvider === 'gemini' && !process.env.GOOGLE_API_KEY) {
+    return res.status(400).json({
+      success: false,
+      error: 'Google API configuration is missing'
+    });
+  }
+
   // Generate a unique ID for this request
   const uniqueId = crypto.randomBytes(8).toString('hex');
   const outputDir = path.join(OUTPUT_DIR_BASE, uniqueId);
-  
+
   // Create the output directory
   fs.mkdirSync(outputDir, { recursive: true });
-  
+
   console.log(`Processing prompt: ${prompt}`);
+  console.log(`Using API provider: ${apiProvider}`);
   console.log(`Output directory: ${outputDir}`);
-  
+
   // Create job entry
   const job = {
     id: uniqueId,
@@ -904,14 +1009,15 @@ app.post('/generateProject', async (req, res) => {
     status: 'pending', // pending, generating, scaffolding, deploying, completed, failed
     created: Date.now(),
     lastUpdated: Date.now(),
-    completed: false
+    completed: false,
+    apiProvider
   };
-  
+
   // Store the job
   deploymentJobs.set(uniqueId, job);
-  
+
   // Start processing in the background
-  processGenerateAndDeploy(prompt, uniqueId).catch(error => {
+  processGenerateAndDeploy(prompt, uniqueId, apiProvider).catch(error => {
     console.error(`Background job error: ${error.message}`);
     const job = deploymentJobs.get(uniqueId);
     if (job) {
@@ -921,7 +1027,7 @@ app.post('/generateProject', async (req, res) => {
       job.completed = true;
     }
   });
-  
+
   // Return immediate response with job ID
   return res.json({
     success: true,
@@ -939,23 +1045,23 @@ app.post('/generateProject', async (req, res) => {
  */
 app.get('/getDeploymentStatus', (req, res) => {
   const { jobId } = req.query;
-  
+
   if (!jobId) {
     return res.status(400).json({
       success: false,
       error: 'Missing required parameter: jobId'
     });
   }
-  
+
   const job = deploymentJobs.get(jobId);
-  
+
   if (!job) {
     return res.status(404).json({
       success: false,
       error: 'Job not found'
     });
   }
-  
+
   // Return different fields based on status
   const response = {
     success: true,
@@ -964,29 +1070,29 @@ app.get('/getDeploymentStatus', (req, res) => {
     created: job.created,
     lastUpdated: job.lastUpdated
   };
-  
+
   // Add additional fields based on status
   if (job.completed) {
     response.outputDir = job.outputDir;
-    
+
     if (job.error) {
       response.error = job.error;
     }
-    
+
     if (job.files) {
       response.files = job.files;
     }
-    
+
     if (job.deploymentUrl) {
       response.deploymentUrl = job.deploymentUrl;
     }
-    
+
     // Only include fileContents if specifically requested
     if (req.query.includeFiles === 'true' && job.fileContents) {
       response.fileContents = job.fileContents;
     }
   }
-  
+
   return res.json(response);
 });
 
