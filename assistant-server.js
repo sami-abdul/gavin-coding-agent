@@ -15,6 +15,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { OpenAI } = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Anthropic } = require('@anthropic-ai/sdk');
 const AdmZip = require('adm-zip');
 const { promisify } = require('util');
 const { spawn, exec } = require('child_process');
@@ -43,17 +44,17 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const genAI = process.env.GOOGLE_API_KEY ? new GoogleGenerativeAI(process.env.GOOGLE_API_KEY) : null;
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
 // Verify necessary environment variables
-if (!process.env.OPENAI_API_KEY && !process.env.GOOGLE_API_KEY) {
-  console.error('Error: Either OPENAI_API_KEY or GOOGLE_API_KEY environment variable is required');
+if (!openai && !genAI && !anthropic) {
+  console.error('Error: At least one API key (OPENAI_API_KEY, GOOGLE_API_KEY, or ANTHROPIC_API_KEY) is required');
   process.exit(1);
 }
 
-if (!ASSISTANT_ID && !process.env.GOOGLE_API_KEY) {
-  console.error('Error: Either ASSISTANT_ID or GOOGLE_API_KEY environment variable is required');
-  process.exit(1);
+if (!ASSISTANT_ID && !genAI && !anthropic) {
+  console.warn('Warning: ASSISTANT_ID is not set. OpenAI Assistant functionality will be unavailable unless using Gemini or Claude.');
 }
 
 // Warn if Vercel token is missing
@@ -813,6 +814,64 @@ function extractCodeFromResponse(response) {
 }
 
 /**
+ * Generate code using Claude API
+ * @param {string} prompt - User's project description
+ * @returns {Promise<Object>} - Generated code files and project info
+ */
+async function generateCodeWithClaude(prompt) {
+  if (!anthropic) {
+    throw new Error('Anthropic client not initialized. Check ANTHROPIC_API_KEY.');
+  }
+  
+  try {
+    // Claude 3.5 Sonnet model ID
+    const modelId = 'claude-3-5-sonnet-20240620'; 
+
+    const enhancedPrompt = `
+You are an expert web development coding assistant. Generate ALL the necessary code files for a web application based on the following requirements:
+
+${prompt}
+
+Instructions:
+1. Provide complete, working code for each file.
+2. Include React components (.jsx or .tsx), CSS/styling, configuration files (package.json, vite.config.js, etc.), utility functions, hooks, and main entry points (index.html, main.jsx/tsx, App.jsx/tsx).
+3. VERY IMPORTANT: Format each code file within a markdown code block like this:
+\`\`\`language
+// filename: path/to/filename.ext
+// Code content starts here
+\`\`\`
+   Replace 'language' with the appropriate language identifier (e.g., javascript, jsx, css, json, html).
+   Ensure the '// filename: ...' comment is on the line immediately after the opening backticks.
+4. Do NOT include explanations outside the code blocks. Only provide the code blocks as requested.
+5. Do NOT attempt to execute any commands (like npm install). I will handle the project setup.
+`;
+
+    console.log(`Sending prompt to Claude model: ${modelId}`);
+    const msg = await anthropic.messages.create({
+      model: modelId,
+      max_tokens: 4096, // Adjust as needed, max for Sonnet 3.5 is higher but keep reasonable
+      messages: [{ role: 'user', content: enhancedPrompt }],
+    });
+
+    // Assuming the response content is in the first block and is text
+    const responseText = msg.content[0]?.type === 'text' ? msg.content[0].text : '';
+
+    if (!responseText) {
+        throw new Error('Received empty response from Claude API');
+    }
+
+    // Extract code blocks and project info using the existing function
+    const { files, projectInfo } = extractCodeFromResponse(responseText);
+    console.log(`Extracted ${Object.keys(files).length} files from Claude response.`);
+    return { files, projectInfo };
+
+  } catch (error) {
+    console.error('Error generating code with Claude:', error);
+    throw error;
+  }
+}
+
+/**
  * Handle the full process of generating and deploying a project
  * @param {string} prompt - User's project description prompt
  * @param {string} uniqueId - Unique ID for this job
@@ -874,11 +933,19 @@ I will handle the setup and installation myself.
       const result = await extractCodeFromAssistantResponse(thread.id);
       files = result.files;
       projectInfo = result.projectInfo;
-    } else {
+    } else if (apiProvider === 'gemini') {
       // Use Gemini
       const result = await generateCodeWithGemini(prompt);
       files = result.files;
       projectInfo = result.projectInfo;
+    } else if (apiProvider === 'claude') { // Add Claude case
+      // Use Claude
+      const result = await generateCodeWithClaude(prompt);
+      files = result.files;
+      projectInfo = result.projectInfo;
+    } else {
+      // Should not happen due to validation, but good practice
+      throw new Error(`Unsupported API provider: ${apiProvider}`);
     }
 
     if (Object.keys(files).length === 0) {
@@ -967,6 +1034,7 @@ I will handle the setup and installation myself.
  */
 app.post('/generateProject', async (req, res) => {
   const { prompt, apiProvider = 'openai' } = req.body;
+  const validProviders = ['openai', 'gemini', 'claude']; // Add claude
 
   // Validate request
   if (!prompt) {
@@ -976,17 +1044,32 @@ app.post('/generateProject', async (req, res) => {
     });
   }
 
-  if (apiProvider === 'openai' && (!process.env.OPENAI_API_KEY || !ASSISTANT_ID)) {
+  if (!validProviders.includes(apiProvider)) {
     return res.status(400).json({
-      success: false,
-      error: 'OpenAI configuration is missing'
+        success: false,
+        error: `Invalid apiProvider. Must be one of: ${validProviders.join(', ')}`
     });
   }
 
-  if (apiProvider === 'gemini' && !process.env.GOOGLE_API_KEY) {
+  // Check if the chosen provider is configured
+  if (apiProvider === 'openai' && (!openai || !ASSISTANT_ID)) {
     return res.status(400).json({
       success: false,
-      error: 'Google API configuration is missing'
+      error: 'OpenAI provider selected, but OPENAI_API_KEY or ASSISTANT_ID is missing or invalid.'
+    });
+  }
+
+  if (apiProvider === 'gemini' && !genAI) {
+    return res.status(400).json({
+      success: false,
+      error: 'Gemini provider selected, but GOOGLE_API_KEY is missing or invalid.'
+    });
+  }
+  
+  if (apiProvider === 'claude' && !anthropic) { // Add check for Claude
+    return res.status(400).json({
+        success: false,
+        error: 'Claude provider selected, but ANTHROPIC_API_KEY is missing or invalid.'
     });
   }
 

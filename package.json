@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node assistant-server.js",
     "test": "node test-assistant-api.js",
+    "test:claude": "node scripts/test-claude-api.js",
     "start-project": "node scripts/start-project.js"
   },
   "keywords": [
@@ -23,7 +24,9 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "openai": "^4.20.1",
+    "@anthropic-ai/sdk": "^0.21.0",
+    "node-fetch": "^2.6.1",
+    "openai": "^4.24.7",
     "vercel": "^32.7.2"
   }
 }

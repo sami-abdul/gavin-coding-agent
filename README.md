@@ -16,7 +16,10 @@ This approach solves the limitation that AI models cannot run npm/npx commands, 
 ## Key Features
 
 - Generates entire project directories with proper structure
-- Supports both OpenAI Assistants and Google's Gemini for code generation
+- Supports multiple AI providers:
+  - OpenAI Assistants API (using a pre-configured Assistant)
+  - Google Gemini API (`gemini-1.5-flash`)
+  - Anthropic Claude API (`claude-3-5-sonnet-20240620`)
 - Runs professional scaffolding tools locally (like Vite, Create React App)
 - Intelligently detects project type (React, Next.js) and language (JS/TS)
 - Creates appropriate configuration files (package.json, vite.config.js, etc.)
@@ -100,6 +103,9 @@ ASSISTANT_ID=asst_your-assistant-id-here
 # Google configuration (required if using Gemini)
 GOOGLE_API_KEY=your-google-api-key-here
 
+# Anthropic configuration (required if using Claude)
+ANTHROPIC_API_KEY=your-anthropic-api-key-here
+
 # Server configuration
 PORT=3001
 
@@ -133,6 +139,11 @@ curl -X POST http://localhost:3001/generateProject \
 curl -X POST http://localhost:3001/generateProject \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Create a React app that displays current weather for a given city using OpenWeatherMap API", "apiProvider": "gemini"}'
+
+# Using Claude
+curl -X POST http://localhost:3001/generateProject \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create a React app that displays current weather for a given city using OpenWeatherMap API", "apiProvider": "claude"}'
 ```
 
 The response will look like:
@@ -211,7 +222,7 @@ npm test
 
 This will prompt you to:
 1. Enter a project description
-2. Choose between OpenAI and Gemini
+2. Choose between OpenAI, Gemini, or Claude
 3. Show the progress and results
 
 ## How It Works
@@ -219,7 +230,7 @@ This will prompt you to:
 1. The server receives a prompt for project generation
 2. It creates a background job and returns a job ID immediately
 3. In the background:
-   - It sends the prompt to either OpenAI Assistant or Gemini to generate code files
+   - It sends the prompt to either OpenAI Assistant, Google's Gemini, or Anthropic Claude to generate code files
    - The AI responds with code for components, styling, configuration, etc.
    - The server extracts all code blocks from the AI's response
    - It analyzes the code to detect framework type (React/Next.js), language (JS/TS), etc.
@@ -231,7 +242,7 @@ This will prompt you to:
 ## Implementation Details
 
 - Uses local scaffolding tools for reliable project structure creation
-- Supports both OpenAI Assistants and Google's Gemini for code generation
+- Supports multiple AI providers for code generation
 - Intelligent code parsing extracts both files and project metadata
 - Automatic detection of React vs Next.js, JavaScript vs TypeScript
 - Support for additional features like Tailwind CSS
