@@ -1,0 +1,12 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: API Client & Testing
+description: "Scripts and tools for interacting with and testing the server API."
+priority: 3
+rules:
+  - type: file
+    path: test-assistant-api.js
+    description: "Command-line client to test the /generateProject endpoint."

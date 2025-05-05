@@ -1,0 +1,15 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: Deployment Logic
+description: "Focuses on the parts of the server responsible for deploying projects, primarily to Vercel (within assistant-server.js)."
+priority: 3
+rules:
+  - type: file
+    path: assistant-server.js
+    description: "Contains the deployToVercel function and related logic."
+  - type: file
+    path: Procfile
+    description: "Declares process types for deployment platforms like Heroku."

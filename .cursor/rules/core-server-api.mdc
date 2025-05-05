@@ -1,0 +1,15 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: Core Server & API
+description: "The main Express server logic (assistant-server.js), handling API requests, core utilities, and job management."
+priority: 1
+rules:
+  - type: file
+    path: assistant-server.js
+    description: "Handles API requests, AI interaction, project generation, validation, and deployment."
+  - type: file
+    path: .env.example
+    description: "Example environment variables needed to run the server."

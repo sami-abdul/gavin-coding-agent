@@ -1,0 +1,19 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: Project Generation & Validation
+description: "Focuses on the parts of the server handling project scaffolding (Vite/Next), adding generated code, and validating the results (within assistant-server.js). Also includes related utility scripts."
+priority: 2
+rules:
+  - type: file
+    path: assistant-server.js
+    description: "Contains functions like createScaffoldedProject, addGeneratedCodeToProject, validateComponentImports, ensureViteConfig."
+  - type: file
+    path: scripts/start-project.js 
+    description: "Utility script (content TBD, likely related to project management)."
+  - type: directory
+    path: generated_projects/
+    description: "Default output directory for generated projects (runtime data)."
+    priority: 5 # Lower priority as it's output

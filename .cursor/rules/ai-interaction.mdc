@@ -1,0 +1,12 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: AI Interaction Logic
+description: "Focuses on the parts of the server responsible for interacting with OpenAI/Gemini APIs, including prompt generation and response parsing (within assistant-server.js)."
+priority: 2
+rules:
+  - type: file
+    path: assistant-server.js 
+    description: "Contains functions like pollForRunCompletion, extractCodeFromAssistantResponse, generateCodeWithGemini, extractCodeFromResponse."

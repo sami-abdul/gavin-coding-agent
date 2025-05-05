@@ -1,0 +1,20 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+name: Configuration & Documentation
+description: "Project configuration files, dependencies, and documentation."
+priority: 4 
+rules:
+  - type: file
+    path: package.json
+    description: "Node.js project manifest (dependencies, scripts)."
+    priority: 2 # Elevate package.json within this group
+  - type: file
+    path: .gitignore
+    description: "Specifies intentionally untracked files that Git should ignore."
+  - type: file
+    path: README.md
+    description: "Project overview, setup, and usage instructions."
+    priority: 5 # Docs are lower priority for code context
